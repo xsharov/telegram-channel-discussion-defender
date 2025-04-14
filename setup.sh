@@ -14,8 +14,16 @@ fi
 echo "Please enter your Telegram bot token (obtained from @BotFather):"
 read token
 
+# Ask for admin ID (optional)
+echo "Please enter your Telegram user ID for receiving logs (optional, press Enter to skip):"
+read admin_id
+
 # Create .env file
 echo "TELEGRAM_BOT_TOKEN=$token" > .env
+if [ -n "$admin_id" ]; then
+    echo "ADMIN_ID=$admin_id" >> .env
+    echo "Admin ID set to $admin_id for log forwarding."
+fi
 echo ".env file created successfully."
 
 # Check if Go is installed
@@ -24,7 +32,7 @@ if command -v go &> /dev/null; then
     go mod download
     go build
     echo "Bot built successfully. You can now run it with:"
-    echo "./telegram-chanel-discussion-bot"
+    echo "./telegram-channel-discussion-defender"
 else
     echo "Go is not installed. Do you want to use Docker instead? (y/n)"
     read answer

@@ -17,14 +17,14 @@ echo "Current user: $CURRENT_USER"
 # Create a temporary file with the correct paths
 cat > telegram-bot.service.tmp << EOL
 [Unit]
-Description=Telegram Channel Discussion Bot
+Description=Telegram Channel Discussion Defender
 After=network.target
 
 [Service]
 Type=simple
 User=$CURRENT_USER
 WorkingDirectory=$CURRENT_DIR
-ExecStart=$CURRENT_DIR/telegram-chanel-discussion-bot
+ExecStart=$CURRENT_DIR/telegram-channel-discussion-defender
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal

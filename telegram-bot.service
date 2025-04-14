@@ -1,12 +1,12 @@
 [Unit]
-Description=Telegram Channel Discussion Bot
+Description=Telegram Channel Discussion Defender
 After=network.target
 
 [Service]
 Type=simple
 User=YOUR_USERNAME
-WorkingDirectory=/path/to/telegram-chanel-discussion-bot
-ExecStart=/path/to/telegram-chanel-discussion-bot/telegram-chanel-discussion-bot
+WorkingDirectory=/path/to/telegram-channel-discussion-defender
+ExecStart=/path/to/telegram-channel-discussion-defender/telegram-channel-discussion-defender
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal

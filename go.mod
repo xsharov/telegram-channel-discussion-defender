@@ -1,4 +1,4 @@
-module telegram-chanel-discussion-bot
+module telegram-channel-discussion-defender
 
 go 1.24.0
 

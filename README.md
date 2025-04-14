@@ -1,4 +1,4 @@
-# Telegram Channel Discussion Bot
+# Telegram Channel Discussion Defender
 
 A moderation bot for Telegram groups that helps maintain order by automatically muting users based on specific rules.
 
@@ -12,6 +12,7 @@ A moderation bot for Telegram groups that helps maintain order by automatically 
 - Deletes all messages that violate these rules
 - Whitelist for users who are exempt from these rules
 - Admin commands to configure mute durations and other settings
+- Logs forwarding to a specified admin via direct messages
 
 ## Setup
 
@@ -39,7 +40,7 @@ A moderation bot for Telegram groups that helps maintain order by automatically 
 5. Build and run the bot:
    ```
    go build
-   ./telegram-chanel-discussion-bot
+   ./telegram-channel-discussion-defender
    ```
 
 ### Manual Setup with Docker
@@ -114,6 +115,7 @@ A moderation bot for Telegram groups that helps maintain order by automatically 
 - `/set_mute_anti_raid [hours]` - Set mute duration for anti-raid mode
 - `/set_anti_raid_threshold [count]` - Set message count threshold for anti-raid activation
 - `/set_anti_raid_window [seconds]` - Set time window for anti-raid detection
+- `/set_admin_id [telegram_id]` - Set the Telegram user ID to receive log messages
 
 ## Bot Permissions
 

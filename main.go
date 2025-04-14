@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,7 @@ type Config struct {
 	AntiRaidTimeWindow           time.Duration // 5 seconds default
 	Whitelist                    map[string]bool
 	AntiRaidMode                 bool
+	AdminID                      int64 // Admin ID to receive logs
 	mutex                        sync.RWMutex
 }
 
@@ -36,7 +38,28 @@ type MessageCounter struct {
 var (
 	config         Config
 	messageCounter MessageCounter
+	bot            *tb.Bot
 )
+
+// logf sends a log message to both the console and the admin (if configured)
+func logf(format string, args ...interface{}) {
+	// Log to console
+	log.Printf(format, args...)
+
+	// Log to admin if configured
+	config.mutex.RLock()
+	adminID := config.AdminID
+	config.mutex.RUnlock()
+
+	if adminID > 0 && bot != nil {
+		admin := &tb.User{ID: adminID}
+		message := fmt.Sprintf(format, args...)
+		_, err := bot.Send(admin, message)
+		if err != nil {
+			log.Printf("Error sending log to admin: %v", err)
+		}
+	}
+}
 
 func init() {
 	// Initialize default configuration
@@ -59,6 +82,16 @@ func init() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using environment variables")
 	}
+
+	// Load admin ID from environment variables
+	if adminIDStr := os.Getenv("ADMIN_ID"); adminIDStr != "" {
+		if adminID, err := strconv.ParseInt(adminIDStr, 10, 64); err == nil {
+			config.AdminID = adminID
+			log.Printf("Admin ID loaded from environment: %d", adminID)
+		} else {
+			log.Printf("Invalid ADMIN_ID in environment: %v", err)
+		}
+	}
 }
 
 func main() {
@@ -68,13 +101,17 @@ func main() {
 	}
 
 	// Create a new bot
-	b, err := tb.NewBot(tb.Settings{
+	var err error
+	bot, err = tb.NewBot(tb.Settings{
 		Token:  token,
 		Poller: &tb.LongPoller{Timeout: 10 * time.Second},
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// Set the global bot variable for logging
+	b := bot
 
 	// Handle messages
 	b.Handle(tb.OnText, func(c tb.Context) error {
@@ -127,7 +164,11 @@ func main() {
 		return handleSetAntiRaidWindowCommand(b, c)
 	})
 
-	log.Println("Bot started")
+	b.Handle("/set_admin_id", func(c tb.Context) error {
+		return handleSetAdminIDCommand(b, c)
+	})
+
+	logf("Bot started")
 	b.Start()
 }
 
@@ -154,7 +195,7 @@ func handleMessage(b *tb.Bot, c tb.Context) error {
 	// Check if user is an admin
 	chatMember, err := b.ChatMemberOf(chat, sender)
 	if err != nil {
-		log.Printf("Error checking if user is admin: %v", err)
+		logf("Error checking if user is admin: %v", err)
 		return nil
 	}
 
@@ -183,7 +224,7 @@ func handleMessage(b *tb.Bot, c tb.Context) error {
 
 	// Check if anti-raid should be activated
 	if shouldActivateAntiRaid() {
-		log.Println("Activating anti-raid mode")
+		logf("Activating anti-raid mode")
 		config.mutex.Lock()
 		config.AntiRaidMode = true
 		config.mutex.Unlock()
@@ -194,7 +235,7 @@ func handleMessage(b *tb.Bot, c tb.Context) error {
 			config.mutex.Lock()
 			config.AntiRaidMode = false
 			config.mutex.Unlock()
-			log.Println("Deactivated anti-raid mode")
+			logf("Deactivated anti-raid mode")
 		}()
 	}
 
@@ -341,9 +382,9 @@ func muteUser(b *tb.Bot, chat *tb.Chat, user *tb.User, duration time.Duration) {
 
 	err := b.Restrict(chat, member)
 	if err != nil {
-		log.Printf("Error muting user %s: %v", user.Username, err)
+		logf("Error muting user %s: %v", user.Username, err)
 	} else {
-		log.Printf("Muted user %s for %v", user.Username, duration)
+		logf("Muted user %s for %v", user.Username, duration)
 	}
 }
 
@@ -351,7 +392,7 @@ func muteUser(b *tb.Bot, chat *tb.Chat, user *tb.User, duration time.Duration) {
 func deleteMessage(b *tb.Bot, msg *tb.Message) {
 	err := b.Delete(msg)
 	if err != nil {
-		log.Printf("Error deleting message: %v", err)
+		logf("Error deleting message: %v", err)
 	}
 }
 
@@ -365,6 +406,7 @@ func handleConfigCommand(b *tb.Bot, c tb.Context) error {
 	}
 
 	config.mutex.RLock()
+	adminID := config.AdminID
 	defer config.mutex.RUnlock()
 
 	configText := fmt.Sprintf(
@@ -375,7 +417,8 @@ func handleConfigCommand(b *tb.Bot, c tb.Context) error {
 			"- Mute duration in anti-raid mode: %v\n"+
 			"- Anti-raid messages threshold: %d\n"+
 			"- Anti-raid time window: %v\n"+
-			"- Anti-raid mode active: %v\n\n"+
+			"- Anti-raid mode active: %v\n"+
+			"- Admin ID for logs: %d\n\n"+
 			"Use the following commands to configure:\n"+
 			"/whitelist_add @username\n"+
 			"/whitelist_remove @username\n"+
@@ -385,7 +428,8 @@ func handleConfigCommand(b *tb.Bot, c tb.Context) error {
 			"/set_mute_suspicious_name [hours]\n"+
 			"/set_mute_anti_raid [hours]\n"+
 			"/set_anti_raid_threshold [count]\n"+
-			"/set_anti_raid_window [seconds]",
+			"/set_anti_raid_window [seconds]\n"+
+			"/set_admin_id [telegram_id]",
 		config.MuteDurationNonLatinCyrillic,
 		config.MuteDurationShortMessage,
 		config.MuteDurationSuspiciousName,
@@ -393,6 +437,7 @@ func handleConfigCommand(b *tb.Bot, c tb.Context) error {
 		config.AntiRaidMessagesThreshold,
 		config.AntiRaidTimeWindow,
 		config.AntiRaidMode,
+		adminID,
 	)
 
 	_, err := b.Send(c.Message().Chat, configText, &tb.SendOptions{
@@ -421,6 +466,7 @@ func handleWhitelistAddCommand(b *tb.Bot, c tb.Context) error {
 	config.mutex.Unlock()
 
 	_, err := b.Send(c.Message().Chat, fmt.Sprintf("Added @%s to whitelist", username))
+	logf("Admin %s added @%s to whitelist", c.Message().Sender.Username, username)
 	return err
 }
 
@@ -444,6 +490,7 @@ func handleWhitelistRemoveCommand(b *tb.Bot, c tb.Context) error {
 	config.mutex.Unlock()
 
 	_, err := b.Send(c.Message().Chat, fmt.Sprintf("Removed @%s from whitelist", username))
+	logf("Admin %s removed @%s from whitelist", c.Message().Sender.Username, username)
 	return err
 }
 
@@ -534,6 +581,7 @@ func handleSetMuteDurationCommand(b *tb.Bot, c tb.Context, violationType string)
 
 	_, err = b.Send(c.Message().Chat, fmt.Sprintf("Mute duration for %s set to %v %s",
 		violationType, duration.Minutes(), unit))
+	logf("Admin %s set mute duration for %s to %v %s", c.Message().Sender.Username, violationType, duration.Minutes(), unit)
 	return err
 }
 
@@ -562,6 +610,7 @@ func handleSetAntiRaidThresholdCommand(b *tb.Bot, c tb.Context) error {
 	config.mutex.Unlock()
 
 	_, err = b.Send(c.Message().Chat, fmt.Sprintf("Anti-raid threshold set to %d messages", threshold))
+	logf("Admin %s set anti-raid threshold to %d messages", c.Message().Sender.Username, threshold)
 	return err
 }
 
@@ -590,6 +639,44 @@ func handleSetAntiRaidWindowCommand(b *tb.Bot, c tb.Context) error {
 	config.mutex.Unlock()
 
 	_, err = b.Send(c.Message().Chat, fmt.Sprintf("Anti-raid time window set to %d seconds", seconds))
+	logf("Admin %s set anti-raid time window to %d seconds", c.Message().Sender.Username, seconds)
+	return err
+}
+
+// handleSetAdminIDCommand sets the admin ID for receiving logs
+func handleSetAdminIDCommand(b *tb.Bot, c tb.Context) error {
+	// Check if user is an admin
+	if !isAdmin(b, c) {
+		return nil
+	}
+
+	args := strings.Fields(c.Message().Text)
+	if len(args) < 2 {
+		_, err := b.Send(c.Message().Chat, "Usage: /set_admin_id [telegram_id]")
+		return err
+	}
+
+	adminID := int64(0)
+	_, err := fmt.Sscanf(args[1], "%d", &adminID)
+	if err != nil || adminID <= 0 {
+		_, err = b.Send(c.Message().Chat, "Invalid admin ID. Please provide a valid Telegram user ID (a positive number).")
+		return err
+	}
+
+	config.mutex.Lock()
+	config.AdminID = adminID
+	config.mutex.Unlock()
+
+	_, err = b.Send(c.Message().Chat, fmt.Sprintf("Admin ID set to %d. This user will now receive log messages.", adminID))
+	logf("Admin %s set log recipient to user ID %d", c.Message().Sender.Username, adminID)
+
+	// Send a test message to the admin
+	admin := &tb.User{ID: adminID}
+	_, err = b.Send(admin, "You have been set as the admin for log messages. You will now receive log notifications from the bot.")
+	if err != nil {
+		_, err = b.Send(c.Message().Chat, fmt.Sprintf("Warning: Could not send a test message to the admin: %v", err))
+	}
+
 	return err
 }
 
@@ -601,7 +688,7 @@ func isAdmin(b *tb.Bot, c tb.Context) bool {
 
 	chatMember, err := b.ChatMemberOf(chat, sender)
 	if err != nil {
-		log.Printf("Error checking if user is admin: %v", err)
+		logf("Error checking if user is admin: %v", err)
 		return false
 	}
 
@@ -609,7 +696,7 @@ func isAdmin(b *tb.Bot, c tb.Context) bool {
 	if !isAdmin {
 		_, err = b.Send(chat, "This command is only available to administrators")
 		if err != nil {
-			log.Printf("Error sending admin-only message: %v", err)
+			logf("Error sending admin-only message: %v", err)
 		}
 	}
 
