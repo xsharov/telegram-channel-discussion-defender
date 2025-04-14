@@ -1,0 +1,11 @@
+version: '3'
+
+services:
+  telegram-bot:
+    build: .
+    restart: always
+    volumes:
+      - ./data:/root/data
+      - ./.env:/root/.env
+    environment:
+      - TZ=Europe/Moscow

@@ -1,0 +1,16 @@
+[Unit]
+Description=Telegram Channel Discussion Bot
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/path/to/telegram-chanel-discussion-bot
+ExecStart=/path/to/telegram-chanel-discussion-bot/telegram-chanel-discussion-bot
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
