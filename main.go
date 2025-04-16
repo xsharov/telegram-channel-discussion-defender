@@ -217,9 +217,15 @@ func handleMessage(b *tb.Bot, c tb.Context) error {
 		muteDuration := config.MuteDurationAntiRaid
 		config.mutex.RUnlock()
 
+		// Get message content for logging
+		messageContent := msg.Text
+		if msg.Sticker != nil {
+			messageContent = fmt.Sprintf("[Sticker: %s]", msg.Sticker.Emoji)
+		}
+
 		// Skip if filtering is disabled (duration is 0)
 		if muteDuration > 0 {
-			muteUser(b, chat, sender, muteDuration, msg.Text)
+			muteUser(b, chat, sender, muteDuration, messageContent)
 			deleteMessage(b, msg)
 		}
 		return nil
@@ -248,6 +254,18 @@ func handleMessage(b *tb.Bot, c tb.Context) error {
 	// Check if user is a member of the group
 	isMember := chatMember.Role == tb.Member
 
+	// Get message content for logging
+	text := msg.Text
+	if msg.Sticker != nil {
+		text = msg.Sticker.Emoji
+	}
+
+	// Get a consistent message content for logging
+	messageContent := text
+	if msg.Sticker != nil {
+		messageContent = fmt.Sprintf("[Sticker: %s]", msg.Sticker.Emoji)
+	}
+
 	// Check username for suspicious pattern (ends with 5+ digits)
 	if hasSuspiciousUsername(sender.Username) {
 		config.mutex.RLock()
@@ -256,16 +274,10 @@ func handleMessage(b *tb.Bot, c tb.Context) error {
 
 		// Skip if filtering is disabled (duration is 0)
 		if muteDuration > 0 {
-			muteUser(b, chat, sender, muteDuration, msg.Text)
+			muteUser(b, chat, sender, muteDuration, messageContent)
 			deleteMessage(b, msg)
 			return nil
 		}
-	}
-
-	// Check message content
-	text := msg.Text
-	if msg.Sticker != nil {
-		text = msg.Sticker.Emoji
 	}
 
 	// Check for short messages (5 or fewer characters)
@@ -276,7 +288,7 @@ func handleMessage(b *tb.Bot, c tb.Context) error {
 
 		// Skip if filtering is disabled (duration is 0)
 		if muteDuration > 0 {
-			muteUser(b, chat, sender, muteDuration, msg.Text)
+			muteUser(b, chat, sender, muteDuration, messageContent)
 			deleteMessage(b, msg)
 			return nil
 		}
@@ -290,7 +302,7 @@ func handleMessage(b *tb.Bot, c tb.Context) error {
 
 		// Skip if filtering is disabled (duration is 0)
 		if muteDuration > 0 {
-			muteUser(b, chat, sender, muteDuration, msg.Text)
+			muteUser(b, chat, sender, muteDuration, messageContent)
 			deleteMessage(b, msg)
 			return nil
 		}
@@ -737,11 +749,13 @@ func isAdmin(b *tb.Bot, c tb.Context) bool {
 	configuredAdminID := config.AdminID
 	config.mutex.RUnlock()
 
+	// If user ID matches the configured admin ID, they're an admin regardless of chat type
 	if configuredAdminID > 0 && sender.ID == configuredAdminID {
 		return true
 	}
 
-	// In private chats, only the configured admin can use admin commands
+	// For private chats, we've already checked if they're the configured admin
+	// If they're not, they can't be an admin in a private chat
 	if chat.Type == tb.ChatPrivate {
 		_, err := b.Send(chat, "This command is only available to the configured admin")
 		if err != nil {
@@ -750,7 +764,7 @@ func isAdmin(b *tb.Bot, c tb.Context) bool {
 		return false
 	}
 
-	// Check if user is a chat admin (only for group chats)
+	// For group chats, check if user is a chat admin
 	chatMember, err := b.ChatMemberOf(chat, sender)
 	if err != nil {
 		logf("Error checking if user is admin: %v", err)
