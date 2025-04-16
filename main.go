@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"regexp"
@@ -15,18 +17,23 @@ import (
 	tb "gopkg.in/telebot.v3"
 )
 
+const (
+	configFile    = "config.json"
+	whitelistFile = "whitelist.json"
+)
+
 // Config holds the bot configuration
 type Config struct {
-	MuteDurationNonLatinCyrillic time.Duration // 5 minutes default
-	MuteDurationShortMessage     time.Duration // 1 minute default
-	MuteDurationSuspiciousName   time.Duration // 1 day default
-	MuteDurationAntiRaid         time.Duration // 1 hour default
-	AntiRaidMessagesThreshold    int           // 10 messages default
-	AntiRaidTimeWindow           time.Duration // 5 seconds default
-	Whitelist                    map[string]bool
-	AntiRaidMode                 bool
-	AdminID                      int64 // Admin ID to receive logs
-	mutex                        sync.RWMutex
+	MuteDurationNonLatinCyrillic time.Duration   `json:"mute_duration_non_latin_cyrillic"` // 5 minutes default
+	MuteDurationShortMessage     time.Duration   `json:"mute_duration_short_message"`      // 1 minute default
+	MuteDurationSuspiciousName   time.Duration   `json:"mute_duration_suspicious_name"`    // 1 day default
+	MuteDurationAntiRaid         time.Duration   `json:"mute_duration_anti_raid"`          // 1 hour default
+	AntiRaidMessagesThreshold    int             `json:"anti_raid_messages_threshold"`     // 10 messages default
+	AntiRaidTimeWindow           time.Duration   `json:"anti_raid_time_window"`            // 5 seconds default
+	Whitelist                    map[string]bool `json:"-"`                                // Managed separately in whitelist.json
+	AntiRaidMode                 bool            `json:"-"`                                // Runtime state, not persisted
+	AdminID                      int64           `json:"admin_id"`                         // Admin ID to receive logs
+	mutex                        sync.RWMutex    `json:"-"`                                // Internal state, not persisted
 }
 
 // MessageCounter for anti-raid detection
@@ -40,6 +47,119 @@ var (
 	messageCounter MessageCounter
 	bot            *tb.Bot
 )
+
+// --- Persistence Functions ---
+
+// loadConfig loads configuration from config.json
+func loadConfig() (Config, error) {
+	defaultConfig := Config{
+		MuteDurationNonLatinCyrillic: 0 * time.Minute,
+		MuteDurationShortMessage:     0 * time.Minute,
+		MuteDurationSuspiciousName:   0 * time.Hour,
+		MuteDurationAntiRaid:         5 * time.Minute,
+		AntiRaidMessagesThreshold:    10,
+		AntiRaidTimeWindow:           5 * time.Second,
+		Whitelist:                    make(map[string]bool), // Initialize map
+		AntiRaidMode:                 false,                 // Default runtime state
+		AdminID:                      0,                     // Default admin ID
+	}
+
+	data, err := ioutil.ReadFile(configFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			log.Printf("Config file '%s' not found, using defaults and creating file.", configFile)
+			// Save default config to create the file
+			if saveErr := saveConfig(defaultConfig); saveErr != nil {
+				log.Printf("Error creating default config file: %v", saveErr)
+				// Return default config even if saving failed
+				return defaultConfig, nil
+			}
+			return defaultConfig, nil
+		}
+		return defaultConfig, fmt.Errorf("error reading config file %s: %w", configFile, err)
+	}
+
+	var loadedConfig Config
+	if err := json.Unmarshal(data, &loadedConfig); err != nil {
+		log.Printf("Error unmarshalling config file %s: %v. Using defaults.", configFile, err)
+		return defaultConfig, nil // Return default config on unmarshal error
+	}
+
+	// Ensure runtime fields are initialized correctly after loading
+	loadedConfig.Whitelist = make(map[string]bool) // Whitelist loaded separately
+	loadedConfig.AntiRaidMode = false              // Reset runtime state
+
+	log.Printf("Config loaded from %s", configFile)
+	return loadedConfig, nil
+}
+
+// saveConfig saves configuration to config.json
+func saveConfig(cfg Config) error {
+	config.mutex.RLock()
+	defer config.mutex.RUnlock()
+
+	// Create a copy for saving, excluding runtime fields
+	configToSave := cfg
+	configToSave.Whitelist = nil      // Don't save whitelist in config.json
+	configToSave.AntiRaidMode = false // Don't save runtime state
+
+	data, err := json.MarshalIndent(configToSave, "", "  ")
+	if err != nil {
+		return fmt.Errorf("error marshalling config: %w", err)
+	}
+
+	err = ioutil.WriteFile(configFile, data, 0644)
+	if err != nil {
+		return fmt.Errorf("error writing config file %s: %w", configFile, err)
+	}
+	log.Printf("Config saved to %s", configFile)
+	return nil
+}
+
+// loadWhitelist loads the whitelist from whitelist.json
+func loadWhitelist() (map[string]bool, error) {
+	whitelist := make(map[string]bool)
+	data, err := ioutil.ReadFile(whitelistFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			log.Printf("Whitelist file '%s' not found, starting with empty whitelist and creating file.", whitelistFile)
+			// Save empty whitelist to create the file
+			if saveErr := saveWhitelist(whitelist); saveErr != nil {
+				log.Printf("Error creating default whitelist file: %v", saveErr)
+			}
+			return whitelist, nil // Return empty map
+		}
+		return nil, fmt.Errorf("error reading whitelist file %s: %w", whitelistFile, err)
+	}
+
+	if err := json.Unmarshal(data, &whitelist); err != nil {
+		log.Printf("Error unmarshalling whitelist file %s: %v. Starting with empty whitelist.", whitelistFile, err)
+		return make(map[string]bool), nil // Return empty map on error
+	}
+
+	log.Printf("Whitelist loaded from %s (%d entries)", whitelistFile, len(whitelist))
+	return whitelist, nil
+}
+
+// saveWhitelist saves the whitelist to whitelist.json
+func saveWhitelist(whitelist map[string]bool) error {
+	config.mutex.RLock() // Use config mutex to protect whitelist access
+	defer config.mutex.RUnlock()
+
+	data, err := json.MarshalIndent(whitelist, "", "  ")
+	if err != nil {
+		return fmt.Errorf("error marshalling whitelist: %w", err)
+	}
+
+	err = ioutil.WriteFile(whitelistFile, data, 0644)
+	if err != nil {
+		return fmt.Errorf("error writing whitelist file %s: %w", whitelistFile, err)
+	}
+	log.Printf("Whitelist saved to %s (%d entries)", whitelistFile, len(whitelist))
+	return nil
+}
+
+// --- End Persistence Functions ---
 
 // logf sends a log message to both the console and the admin (if configured)
 func logf(format string, args ...interface{}) {
@@ -62,35 +182,49 @@ func logf(format string, args ...interface{}) {
 }
 
 func init() {
-	// Initialize default configuration
-	config = Config{
-		MuteDurationNonLatinCyrillic: 0 * time.Minute,
-		MuteDurationShortMessage:     0 * time.Minute,
-		MuteDurationSuspiciousName:   0 * time.Hour,
-		MuteDurationAntiRaid:         5 * time.Minute,
-		AntiRaidMessagesThreshold:    10,
-		AntiRaidTimeWindow:           5 * time.Second,
-		Whitelist:                    make(map[string]bool),
-		AntiRaidMode:                 false,
+	var err error
+	// Load configuration from file
+	config, err = loadConfig()
+	if err != nil {
+		log.Printf("Error loading config: %v. Continuing with defaults.", err)
+		// loadConfig returns defaults on error, so we can continue
 	}
+
+	// Load whitelist from file
+	whitelist, err := loadWhitelist()
+	if err != nil {
+		log.Printf("Error loading whitelist: %v. Starting with empty whitelist.", err)
+		// loadWhitelist returns an empty map on error
+	}
+	config.Whitelist = whitelist // Assign loaded whitelist to config
 
 	messageCounter = MessageCounter{
 		messages: make([]time.Time, 0, 100),
 	}
 
-	// Load environment variables from .env file
+	// Load environment variables from .env file (for token mainly)
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using environment variables")
 	}
 
-	// Load admin ID from environment variables
-	if adminIDStr := os.Getenv("ADMIN_ID"); adminIDStr != "" {
-		if adminID, err := strconv.ParseInt(adminIDStr, 10, 64); err == nil {
-			config.AdminID = adminID
-			log.Printf("Admin ID loaded from environment: %d", adminID)
-		} else {
-			log.Printf("Invalid ADMIN_ID in environment: %v", err)
+	// Load admin ID from environment variables ONLY if not set in config file
+	if config.AdminID == 0 {
+		if adminIDStr := os.Getenv("ADMIN_ID"); adminIDStr != "" {
+			if adminID, err := strconv.ParseInt(adminIDStr, 10, 64); err == nil {
+				config.mutex.Lock()
+				config.AdminID = adminID
+				config.mutex.Unlock()
+				log.Printf("Admin ID loaded from environment: %d (config file was empty)", adminID)
+				// Save the config now that AdminID is potentially updated from env
+				if err := saveConfig(config); err != nil {
+					log.Printf("Error saving config after loading AdminID from env: %v", err)
+				}
+			} else {
+				log.Printf("Invalid ADMIN_ID in environment: %v", err)
+			}
 		}
+	} else {
+		log.Printf("Admin ID loaded from config file: %d", config.AdminID)
 	}
 }
 
@@ -518,6 +652,13 @@ func handleWhitelistAddCommand(b *tb.Bot, c tb.Context) error {
 
 	_, err := b.Send(c.Message().Chat, fmt.Sprintf("Added @%s to whitelist", username))
 	logf("Admin %s added @%s to whitelist", c.Message().Sender.Username, username)
+
+	// Save whitelist
+	if err := saveWhitelist(config.Whitelist); err != nil {
+		logf("Error saving whitelist: %v", err)
+		// Inform admin about the save error? Maybe just log for now.
+	}
+
 	return err
 }
 
@@ -542,6 +683,12 @@ func handleWhitelistRemoveCommand(b *tb.Bot, c tb.Context) error {
 
 	_, err := b.Send(c.Message().Chat, fmt.Sprintf("Removed @%s from whitelist", username))
 	logf("Admin %s removed @%s from whitelist", c.Message().Sender.Username, username)
+
+	// Save whitelist
+	if err := saveWhitelist(config.Whitelist); err != nil {
+		logf("Error saving whitelist: %v", err)
+	}
+
 	return err
 }
 
@@ -640,6 +787,12 @@ func handleSetMuteDurationCommand(b *tb.Bot, c tb.Context, violationType string)
 	}
 
 	_, err = b.Send(c.Message().Chat, message)
+
+	// Save config
+	if err := saveConfig(config); err != nil {
+		logf("Error saving config: %v", err)
+	}
+
 	return err
 }
 
@@ -669,6 +822,12 @@ func handleSetAntiRaidThresholdCommand(b *tb.Bot, c tb.Context) error {
 
 	_, err = b.Send(c.Message().Chat, fmt.Sprintf("Anti-raid threshold set to %d messages", threshold))
 	logf("Admin %s set anti-raid threshold to %d messages", c.Message().Sender.Username, threshold)
+
+	// Save config
+	if err := saveConfig(config); err != nil {
+		logf("Error saving config: %v", err)
+	}
+
 	return err
 }
 
@@ -698,6 +857,12 @@ func handleSetAntiRaidWindowCommand(b *tb.Bot, c tb.Context) error {
 
 	_, err = b.Send(c.Message().Chat, fmt.Sprintf("Anti-raid time window set to %d seconds", seconds))
 	logf("Admin %s set anti-raid time window to %d seconds", c.Message().Sender.Username, seconds)
+
+	// Save config
+	if err := saveConfig(config); err != nil {
+		logf("Error saving config: %v", err)
+	}
+
 	return err
 }
 
@@ -733,6 +898,11 @@ func handleSetAdminIDCommand(b *tb.Bot, c tb.Context) error {
 	_, err = b.Send(admin, "You have been set as the admin for log messages. You will now receive log notifications from the bot.")
 	if err != nil {
 		_, err = b.Send(c.Message().Chat, fmt.Sprintf("Warning: Could not send a test message to the admin: %v", err))
+	}
+
+	// Save config
+	if err := saveConfig(config); err != nil {
+		logf("Error saving config: %v", err)
 	}
 
 	return err

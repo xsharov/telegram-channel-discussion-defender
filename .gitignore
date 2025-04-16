@@ -1,6 +1,10 @@
 # Environment variables
 .env
 
+# Configuration files
+config.json
+whitelist.json
+
 # Build artifacts
 telegram-chanel-discussion-bot
 telegram-bot
