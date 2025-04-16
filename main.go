@@ -217,8 +217,11 @@ func handleMessage(b *tb.Bot, c tb.Context) error {
 		muteDuration := config.MuteDurationAntiRaid
 		config.mutex.RUnlock()
 
-		muteUser(b, chat, sender, muteDuration)
-		deleteMessage(b, msg)
+		// Skip if filtering is disabled (duration is 0)
+		if muteDuration > 0 {
+			muteUser(b, chat, sender, muteDuration, msg.Text)
+			deleteMessage(b, msg)
+		}
 		return nil
 	}
 
@@ -251,9 +254,12 @@ func handleMessage(b *tb.Bot, c tb.Context) error {
 		muteDuration := config.MuteDurationSuspiciousName
 		config.mutex.RUnlock()
 
-		muteUser(b, chat, sender, muteDuration)
-		deleteMessage(b, msg)
-		return nil
+		// Skip if filtering is disabled (duration is 0)
+		if muteDuration > 0 {
+			muteUser(b, chat, sender, muteDuration, msg.Text)
+			deleteMessage(b, msg)
+			return nil
+		}
 	}
 
 	// Check message content
@@ -268,9 +274,12 @@ func handleMessage(b *tb.Bot, c tb.Context) error {
 		muteDuration := config.MuteDurationShortMessage
 		config.mutex.RUnlock()
 
-		muteUser(b, chat, sender, muteDuration)
-		deleteMessage(b, msg)
-		return nil
+		// Skip if filtering is disabled (duration is 0)
+		if muteDuration > 0 {
+			muteUser(b, chat, sender, muteDuration, msg.Text)
+			deleteMessage(b, msg)
+			return nil
+		}
 	}
 
 	// Check for non-Latin and non-Cyrillic characters
@@ -279,9 +288,12 @@ func handleMessage(b *tb.Bot, c tb.Context) error {
 		muteDuration := config.MuteDurationNonLatinCyrillic
 		config.mutex.RUnlock()
 
-		muteUser(b, chat, sender, muteDuration)
-		deleteMessage(b, msg)
-		return nil
+		// Skip if filtering is disabled (duration is 0)
+		if muteDuration > 0 {
+			muteUser(b, chat, sender, muteDuration, msg.Text)
+			deleteMessage(b, msg)
+			return nil
+		}
 	}
 
 	return nil
@@ -365,7 +377,7 @@ func shouldActivateAntiRaid() bool {
 }
 
 // muteUser restricts a user from sending messages for the specified duration
-func muteUser(b *tb.Bot, chat *tb.Chat, user *tb.User, duration time.Duration) {
+func muteUser(b *tb.Bot, chat *tb.Chat, user *tb.User, duration time.Duration, messageText string) {
 	until := time.Now().Add(duration)
 
 	member := &tb.ChatMember{
@@ -384,7 +396,7 @@ func muteUser(b *tb.Bot, chat *tb.Chat, user *tb.User, duration time.Duration) {
 	if err != nil {
 		logf("Error muting user %s: %v", user.Username, err)
 	} else {
-		logf("Muted user %s for %v", user.Username, duration)
+		logf("Muted user %s for %v. Message: %s", user.Username, duration, messageText)
 	}
 }
 
@@ -409,12 +421,39 @@ func handleConfigCommand(b *tb.Bot, c tb.Context) error {
 	adminID := config.AdminID
 	defer config.mutex.RUnlock()
 
+	// Format each mute duration, showing "disabled" if it's 0
+	var nonLatinCyrillicStatus, shortMessageStatus, suspiciousNameStatus, antiRaidStatus string
+
+	if config.MuteDurationNonLatinCyrillic == 0 {
+		nonLatinCyrillicStatus = "disabled"
+	} else {
+		nonLatinCyrillicStatus = config.MuteDurationNonLatinCyrillic.String()
+	}
+
+	if config.MuteDurationShortMessage == 0 {
+		shortMessageStatus = "disabled"
+	} else {
+		shortMessageStatus = config.MuteDurationShortMessage.String()
+	}
+
+	if config.MuteDurationSuspiciousName == 0 {
+		suspiciousNameStatus = "disabled"
+	} else {
+		suspiciousNameStatus = config.MuteDurationSuspiciousName.String()
+	}
+
+	if config.MuteDurationAntiRaid == 0 {
+		antiRaidStatus = "disabled"
+	} else {
+		antiRaidStatus = config.MuteDurationAntiRaid.String()
+	}
+
 	configText := fmt.Sprintf(
 		"*Current Configuration:*\n"+
-			"- Mute duration for non-Latin/Cyrillic: %v\n"+
-			"- Mute duration for short messages: %v\n"+
-			"- Mute duration for suspicious usernames: %v\n"+
-			"- Mute duration in anti-raid mode: %v\n"+
+			"- Non-Latin/Cyrillic filtering: %s\n"+
+			"- Short message filtering: %s\n"+
+			"- Suspicious username filtering: %s\n"+
+			"- Anti-raid mode mute duration: %s\n"+
 			"- Anti-raid messages threshold: %d\n"+
 			"- Anti-raid time window: %v\n"+
 			"- Anti-raid mode active: %v\n"+
@@ -423,17 +462,17 @@ func handleConfigCommand(b *tb.Bot, c tb.Context) error {
 			"/whitelist_add @username\n"+
 			"/whitelist_remove @username\n"+
 			"/whitelist_list\n"+
-			"/set_mute_non_latin_cyrillic [minutes]\n"+
-			"/set_mute_short_message [minutes]\n"+
-			"/set_mute_suspicious_name [hours]\n"+
-			"/set_mute_anti_raid [hours]\n"+
+			"/set_mute_non_latin_cyrillic [minutes] (0 to disable)\n"+
+			"/set_mute_short_message [minutes] (0 to disable)\n"+
+			"/set_mute_suspicious_name [hours] (0 to disable)\n"+
+			"/set_mute_anti_raid [hours] (0 to disable)\n"+
 			"/set_anti_raid_threshold [count]\n"+
 			"/set_anti_raid_window [seconds]\n"+
 			"/set_admin_id [telegram_id]",
-		config.MuteDurationNonLatinCyrillic,
-		config.MuteDurationShortMessage,
-		config.MuteDurationSuspiciousName,
-		config.MuteDurationAntiRaid,
+		nonLatinCyrillicStatus,
+		shortMessageStatus,
+		suspiciousNameStatus,
+		antiRaidStatus,
 		config.AntiRaidMessagesThreshold,
 		config.AntiRaidTimeWindow,
 		config.AntiRaidMode,
@@ -532,13 +571,13 @@ func handleSetMuteDurationCommand(b *tb.Bot, c tb.Context, violationType string)
 		var usage string
 		switch violationType {
 		case "non_latin_cyrillic":
-			usage = "Usage: /set_mute_non_latin_cyrillic [minutes]"
+			usage = "Usage: /set_mute_non_latin_cyrillic [minutes] (set to 0 to disable filtering)"
 		case "short_message":
-			usage = "Usage: /set_mute_short_message [minutes]"
+			usage = "Usage: /set_mute_short_message [minutes] (set to 0 to disable filtering)"
 		case "suspicious_name":
-			usage = "Usage: /set_mute_suspicious_name [hours]"
+			usage = "Usage: /set_mute_suspicious_name [hours] (set to 0 to disable filtering)"
 		case "anti_raid":
-			usage = "Usage: /set_mute_anti_raid [hours]"
+			usage = "Usage: /set_mute_anti_raid [hours] (set to 0 to disable filtering)"
 		}
 		_, err := b.Send(c.Message().Chat, usage)
 		return err
@@ -579,9 +618,16 @@ func handleSetMuteDurationCommand(b *tb.Bot, c tb.Context, violationType string)
 	}
 	config.mutex.Unlock()
 
-	_, err = b.Send(c.Message().Chat, fmt.Sprintf("Mute duration for %s set to %v %s",
-		violationType, duration.Minutes(), unit))
-	logf("Admin %s set mute duration for %s to %v %s", c.Message().Sender.Username, violationType, duration.Minutes(), unit)
+	var message string
+	if duration == 0 {
+		message = fmt.Sprintf("Filtering for %s has been disabled", violationType)
+		logf("Admin %s disabled filtering for %s", c.Message().Sender.Username, violationType)
+	} else {
+		message = fmt.Sprintf("Mute duration for %s set to %v %s", violationType, duration.Minutes(), unit)
+		logf("Admin %s set mute duration for %s to %v %s", c.Message().Sender.Username, violationType, duration.Minutes(), unit)
+	}
+
+	_, err = b.Send(c.Message().Chat, message)
 	return err
 }
 
@@ -680,12 +726,22 @@ func handleSetAdminIDCommand(b *tb.Bot, c tb.Context) error {
 	return err
 }
 
-// isAdmin checks if the user is an admin of the chat
+// isAdmin checks if the user is an admin of the chat or the configured admin
 func isAdmin(b *tb.Bot, c tb.Context) bool {
 	msg := c.Message()
 	sender := msg.Sender
 	chat := msg.Chat
 
+	// Check if user is the configured admin
+	config.mutex.RLock()
+	configuredAdminID := config.AdminID
+	config.mutex.RUnlock()
+
+	if configuredAdminID > 0 && sender.ID == configuredAdminID {
+		return true
+	}
+
+	// Check if user is a chat admin
 	chatMember, err := b.ChatMemberOf(chat, sender)
 	if err != nil {
 		logf("Error checking if user is admin: %v", err)
@@ -694,7 +750,7 @@ func isAdmin(b *tb.Bot, c tb.Context) bool {
 
 	isAdmin := chatMember.Role == tb.Administrator || chatMember.Role == tb.Creator
 	if !isAdmin {
-		_, err = b.Send(chat, "This command is only available to administrators")
+		_, err = b.Send(chat, "This command is only available to administrators or the configured admin")
 		if err != nil {
 			logf("Error sending admin-only message: %v", err)
 		}
