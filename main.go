@@ -741,7 +741,16 @@ func isAdmin(b *tb.Bot, c tb.Context) bool {
 		return true
 	}
 
-	// Check if user is a chat admin
+	// In private chats, only the configured admin can use admin commands
+	if chat.Type == tb.ChatPrivate {
+		_, err := b.Send(chat, "This command is only available to the configured admin")
+		if err != nil {
+			logf("Error sending admin-only message: %v", err)
+		}
+		return false
+	}
+
+	// Check if user is a chat admin (only for group chats)
 	chatMember, err := b.ChatMemberOf(chat, sender)
 	if err != nil {
 		logf("Error checking if user is admin: %v", err)
