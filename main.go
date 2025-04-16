@@ -64,10 +64,10 @@ func logf(format string, args ...interface{}) {
 func init() {
 	// Initialize default configuration
 	config = Config{
-		MuteDurationNonLatinCyrillic: 5 * time.Minute,
-		MuteDurationShortMessage:     1 * time.Minute,
-		MuteDurationSuspiciousName:   24 * time.Hour,
-		MuteDurationAntiRaid:         1 * time.Hour,
+		MuteDurationNonLatinCyrillic: 0 * time.Minute,
+		MuteDurationShortMessage:     0 * time.Minute,
+		MuteDurationSuspiciousName:   0 * time.Hour,
+		MuteDurationAntiRaid:         5 * time.Minute,
 		AntiRaidMessagesThreshold:    10,
 		AntiRaidTimeWindow:           5 * time.Second,
 		Whitelist:                    make(map[string]bool),
